@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ut-cover-agent-tool"
+version = "0.1.0"
+description = "Commit-driven UT and coverage helper CLI for AI-assisted test writing workflows."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+test = []
+
+[project.scripts]
+ut-cover = "ut_cover_agent_tool.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

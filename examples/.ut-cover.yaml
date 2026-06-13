@@ -1,0 +1,26 @@
+# Copy this file to the target repository root as .ut-cover.yaml and edit it.
+
+# Run this when only test status is needed.
+test_command: "python -m unittest discover"
+
+# Prefer a command that writes coverage_report.
+# Python example:
+# coverage_command: "python -m coverage run -m unittest discover && python -m coverage json -o coverage.json"
+coverage_command: ""
+
+# Supported first: coverage.py JSON and Cobertura XML.
+coverage_report: "coverage.json"
+
+source_dirs:
+  - "src"
+
+test_dirs:
+  - "tests"
+
+exclude:
+  - ".venv"
+  - "node_modules"
+  - "dist"
+  - "build"
+
+report_dir: ".ut-cover/reports"

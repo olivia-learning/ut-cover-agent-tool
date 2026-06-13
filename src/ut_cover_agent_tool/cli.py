@@ -14,6 +14,7 @@ from .errors import ToolUnavailableError, UtCoverError
 from .git_tools import analyze_commits, ensure_git_available, ensure_git_repo, parse_commit_inputs
 from .presets import CONFIG_PRESETS, detect_preset, render_config
 from .reports import build_report_payload, read_json, render_markdown, write_json, write_markdown
+from .test_planning import build_test_plan, render_test_plan_markdown, review_touched_tests
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -61,6 +62,28 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--output", default=".ut-cover/coverage.json", help="Coverage result JSON output path.")
     coverage.add_argument("--timeout", type=int, default=None, help="Command timeout in seconds.")
     coverage.set_defaults(func=cmd_run_coverage)
+
+    plan_tests = subparsers.add_parser("plan-tests", help="Find local UT neighbors and produce a safe test plan.")
+    add_common(plan_tests)
+    plan_tests.add_argument("--analysis", default=".ut-cover/analysis.json", help="Analysis JSON path.")
+    plan_tests.add_argument("--output", default=".ut-cover/test-plan.json", help="Test plan JSON output path.")
+    plan_tests.add_argument("--markdown-output", default=".ut-cover/test-plan.md", help="Test plan Markdown output path.")
+    plan_tests.set_defaults(func=cmd_plan_tests)
+
+    inspect_tests = subparsers.add_parser("inspect-tests", help="Inspect local test neighbors without global style summary.")
+    add_common(inspect_tests)
+    inspect_tests.add_argument("--analysis", default=".ut-cover/analysis.json", help="Analysis JSON path.")
+    inspect_tests.add_argument("--output", default=".ut-cover/test-neighbors.json", help="Neighbor JSON output path.")
+    inspect_tests.add_argument("--markdown-output", default=".ut-cover/test-neighbors.md", help="Neighbor Markdown output path.")
+    inspect_tests.set_defaults(func=cmd_plan_tests)
+
+    review_tests = subparsers.add_parser("review-tests", help="Review touched tests for DT mimic and missing assertions.")
+    add_common(review_tests)
+    review_tests.add_argument("--plan", default=".ut-cover/test-plan.json", help="Test plan JSON path.")
+    review_tests.add_argument("--output", default=".ut-cover/test-review.json", help="Review JSON output path.")
+    review_tests.add_argument("--touched-test", action="append", default=[], help="Changed test file. May be repeated.")
+    review_tests.add_argument("--touched-test-file", help="File containing changed test paths.")
+    review_tests.set_defaults(func=cmd_review_tests)
 
     report = subparsers.add_parser("report", help="Build Markdown and JSON summary reports.")
     report.add_argument("--analysis", default=".ut-cover/analysis.json", help="Analysis JSON path.")
@@ -185,6 +208,41 @@ def cmd_run_coverage(args: argparse.Namespace) -> int:
     write_json(payload, output)
     print(f"Wrote coverage result: {output}")
     return 0 if result.ok else result.exit_code
+
+
+def cmd_plan_tests(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    analysis_path = _resolve_output(repo, args.analysis)
+    if not analysis_path.exists():
+        raise UtCoverError(f"Analysis not found: {analysis_path}. Run analyze-commits first.")
+    analysis = read_json(analysis_path)
+    plan = build_test_plan(repo, config, analysis)
+    json_output = write_json(plan, _resolve_output(repo, args.output))
+    markdown_output = write_markdown(render_test_plan_markdown(plan), _resolve_output(repo, args.markdown_output))
+    print(f"Wrote test plan JSON: {json_output}")
+    print(f"Wrote test plan Markdown: {markdown_output}")
+    return 0
+
+
+def cmd_review_tests(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    touched_tests = list(args.touched_test or [])
+    if args.touched_test_file:
+        touched_tests.extend(
+            line.strip()
+            for line in Path(args.touched_test_file).read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+    if not touched_tests:
+        raise UtCoverError("No touched tests provided. Use --touched-test or --touched-test-file.")
+    plan_path = _resolve_output(repo, args.plan)
+    plan = read_json(plan_path) if plan_path.exists() else None
+    review = review_touched_tests(repo, config, touched_tests, plan)
+    output = write_json(review, _resolve_output(repo, args.output))
+    print(f"Wrote test review: {output}")
+    return 0 if review["ok"] else 1
 
 
 def cmd_report(args: argparse.Namespace) -> int:

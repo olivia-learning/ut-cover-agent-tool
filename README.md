@@ -10,6 +10,7 @@
 - 按目标仓库配置运行测试命令或覆盖率命令。
 - 解析 coverage.py JSON 和 Cobertura XML 覆盖率报告。
 - 生成 JSON 和 Markdown 格式的 UT/覆盖率报告。
+- 针对大仓库局部查找最近邻 UT，避免误模仿 DT、integration、e2e 等测试。
 - 提供 OpenCode 子代理工作流，用于自动分析缺失测试、补 UT、反复验证。
 
 CLI 本身不会直接生成测试代码。OpenCode Agent 会读取 CLI 的分析结果，判断要补哪些测试，然后调用 CLI 反复运行测试和覆盖率，直到结果明确。
@@ -115,6 +116,10 @@ source_dirs: ["src"]
 test_dirs: ["tests"]
 exclude: [".venv", "node_modules", "dist", "build"]
 report_dir: ".ut-cover/reports"
+unit_test_include: []
+unit_test_exclude: []
+dt_test_patterns: ["*integration*", "*e2e*", "*system*", "*dt*", "*device*", "*driver*", "*hardware*", "*scenario*", "*acceptance*"]
+preferred_test_roots: []
 ```
 
 其他语言项目也可以使用，只要把 `coverage_command` 配置成能生成覆盖率报告的项目命令即可。第一版优先支持 coverage.py JSON 和 Cobertura XML。
@@ -143,10 +148,28 @@ ut-cover analyze-commits --repo <TARGET_REPO> --commit abc123,def456
 ut-cover analyze-commits --repo <TARGET_REPO> --commit-file commits.txt
 ```
 
+围绕 commit 变更文件查找局部 UT 邻居，不做全仓库风格总结：
+
+```powershell
+ut-cover inspect-tests --repo <TARGET_REPO>
+```
+
+生成安全测试计划。AI 只能模仿高置信度 UT 邻居；如果状态是 `low_confidence`，应停止并说明没有安全模仿来源：
+
+```powershell
+ut-cover plan-tests --repo <TARGET_REPO>
+```
+
 运行测试和覆盖率：
 
 ```powershell
 ut-cover run-coverage --repo <TARGET_REPO>
+```
+
+检查新增/修改的测试是否误模仿 DT、是否缺少明确断言：
+
+```powershell
+ut-cover review-tests --repo <TARGET_REPO> --touched-test tests\test_example.py
 ```
 
 生成最终报告：
@@ -184,7 +207,7 @@ OPENCODE_ZIP_SETUP.md
 
 ## 测试覆盖
 
-当前自动化测试位于 `tests/`，共 17 个测试点，主要覆盖：
+当前自动化测试位于 `tests/`，共 22 个测试点，主要覆盖：
 
 - `test_config.py`：配置文件默认值、YAML 配置读取。
 - `test_git_tools.py`：commit 列表解析、rename 文件解析、Git 缺失提示、`UT_COVER_GIT` 环境变量、Windows Git 候选路径。
@@ -192,6 +215,8 @@ OPENCODE_ZIP_SETUP.md
 - `test_reports.py`：JSON/Markdown 报告内容生成。
 - `test_cli_flow.py`：用假的覆盖率生成脚本验证 `run-coverage` 到 `report` 的完整 CLI 流程。
 - `test_init_config.py`：验证 `init-config` 能生成新手配置、不会误覆盖已有配置、支持命令覆盖，并能自动识别 C++/CMake、Python、Node/Jest 项目。
+- `test_test_planning.py`：验证局部 UT 邻居推荐、DT/integration 阻断、include/exclude 覆盖、无断言测试 review。
+- `test_test_planning_cli.py`：验证 `plan-tests` 和 `review-tests` 命令端到端可用。
 - `test_package_zip.py`：验证 ZIP 只包含 `ut-cover-agent-tool/`，不会混入之前的 AI SSH MCP 工具目录。
 
 运行测试：

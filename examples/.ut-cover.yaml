@@ -23,4 +23,19 @@ exclude:
   - "dist"
   - "build"
 
+# Keep weak AI from mimicking DT/integration/e2e tests in large repositories.
+unit_test_include: []
+unit_test_exclude: []
+dt_test_patterns:
+  - "*integration*"
+  - "*e2e*"
+  - "*system*"
+  - "*dt*"
+  - "*device*"
+  - "*driver*"
+  - "*hardware*"
+  - "*scenario*"
+  - "*acceptance*"
+preferred_test_roots: []
+
 report_dir: ".ut-cover/reports"

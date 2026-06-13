@@ -228,11 +228,17 @@ Use ut-coverage-writer. For repo C:\Work\my-product-repo, add UT for commits abc
 
 1. `ut-cover doctor`
 2. `ut-cover analyze-commits`
-3. 分析 diff 和变更源码
-4. 新增或修改 UT
-5. `ut-cover run-coverage`
-6. 失败则迭代修复
-7. `ut-cover report`
+3. `ut-cover inspect-tests`
+4. `ut-cover plan-tests`
+5. 只模仿 test plan 中的高置信度 UT 邻居
+6. 如果某个变更文件是 `low_confidence`，停下来说明没有安全可模仿的 UT 来源
+7. 新增或修改 UT
+8. `ut-cover run-coverage`
+9. `ut-cover review-tests`
+10. 失败则迭代修复
+11. `ut-cover report`
+
+主 AI 不要要求子代理总结全仓库测试风格。大仓库里 UT/DT/集成测试混杂时，必须只做局部最近邻扫描，并禁止模仿 DT、integration、e2e、system、device、driver、hardware、scenario、acceptance 测试。
 
 ## 常见输出位置
 
@@ -240,6 +246,10 @@ Use ut-coverage-writer. For repo C:\Work\my-product-repo, add UT for commits abc
 
 ```text
 .ut-cover\analysis.json
+.ut-cover\test-neighbors.json
+.ut-cover\test-plan.json
+.ut-cover\test-plan.md
+.ut-cover\test-review.json
 .ut-cover\coverage.json
 .ut-cover\reports\ut-coverage-report.md
 .ut-cover\reports\ut-coverage-report.json

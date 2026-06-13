@@ -17,6 +17,10 @@ class ToolConfig:
     source_dirs: list[str]
     test_dirs: list[str]
     exclude: list[str]
+    unit_test_include: list[str]
+    unit_test_exclude: list[str]
+    dt_test_patterns: list[str]
+    preferred_test_roots: list[str]
     report_dir: str
     config_path: str | None = None
 
@@ -28,6 +32,10 @@ class ToolConfig:
             "source_dirs": self.source_dirs,
             "test_dirs": self.test_dirs,
             "exclude": self.exclude,
+            "unit_test_include": self.unit_test_include,
+            "unit_test_exclude": self.unit_test_exclude,
+            "dt_test_patterns": self.dt_test_patterns,
+            "preferred_test_roots": self.preferred_test_roots,
             "report_dir": self.report_dir,
             "config_path": self.config_path,
         }
@@ -40,6 +48,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "source_dirs": ["src"],
     "test_dirs": ["tests"],
     "exclude": [],
+    "unit_test_include": [],
+    "unit_test_exclude": [],
+    "dt_test_patterns": [
+        "*integration*",
+        "*e2e*",
+        "*system*",
+        "*dt*",
+        "*device*",
+        "*driver*",
+        "*hardware*",
+        "*scenario*",
+        "*acceptance*",
+    ],
+    "preferred_test_roots": [],
     "report_dir": ".ut-cover/reports",
 }
 
@@ -63,6 +85,10 @@ def load_config(repo: str | Path = ".", config_path: str | Path | None = None) -
         source_dirs=_string_list(data.get("source_dirs"), ["src"]),
         test_dirs=_string_list(data.get("test_dirs"), ["tests"]),
         exclude=_string_list(data.get("exclude"), []),
+        unit_test_include=_string_list(data.get("unit_test_include"), []),
+        unit_test_exclude=_string_list(data.get("unit_test_exclude"), []),
+        dt_test_patterns=_string_list(data.get("dt_test_patterns"), DEFAULT_CONFIG["dt_test_patterns"]),
+        preferred_test_roots=_string_list(data.get("preferred_test_roots"), []),
         report_dir=str(data.get("report_dir") or ".ut-cover/reports"),
         config_path=path_text,
     )

@@ -62,11 +62,11 @@ def should_exclude(path: Path, project_root: Path) -> bool:
     rel = path.relative_to(project_root)
     if any(part in EXCLUDED_DIRS for part in rel.parts):
         return True
+    if any(part.endswith(".egg-info") for part in rel.parts):
+        return True
     if path.is_dir():
         return False
     if path.suffix in EXCLUDED_SUFFIXES:
-        return True
-    if path.name.endswith(".egg-info"):
         return True
     return False
 

@@ -55,6 +55,50 @@ class CliFlowTests(unittest.TestCase):
             self.assertEqual(payload["coverage"]["percent"], 50.0)
             self.assertEqual(payload["touched_tests"], ["tests/test_app.py"])
 
+    def test_set_coverage_goal_writes_config_and_run_coverage_enforces_gate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            writer = repo / "write_coverage.py"
+            writer.write_text(
+                "import json\n"
+                "open('coverage.json', 'w', encoding='utf-8').write(json.dumps({\n"
+                "  'totals': {'covered_lines': 1, 'missing_lines': 1, 'num_statements': 2, 'percent_covered': 50.0},\n"
+                "  'files': {'src/app.py': {'summary': {'covered_lines': 1, 'missing_lines': 1, 'num_statements': 2, 'percent_covered': 50.0}, 'missing_lines': [2]}}\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            command = f"{sys.executable} write_coverage.py".replace("'", "''")
+            (repo / ".ut-cover.yaml").write_text(
+                "\n".join(
+                    [
+                        f"coverage_command: '{command}'",
+                        'coverage_report: "coverage.json"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            goal_code = main(
+                [
+                    "set-coverage-goal",
+                    "--repo",
+                    str(repo),
+                    "--overall",
+                    "80",
+                    "--changed-files",
+                    "85",
+                    "--unknown-action",
+                    "fail",
+                ]
+            )
+            run_code = main(["run-coverage", "--repo", str(repo), "--output", ".ut-cover/coverage.json"])
+
+            self.assertEqual(goal_code, 0)
+            self.assertEqual(run_code, 1)
+            payload = json.loads((repo / ".ut-cover" / "coverage.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["coverage_gate"]["status"], "failed")
+            self.assertEqual(payload["coverage_gate"]["next_action"], "report_threshold_failure")
+
 
 if __name__ == "__main__":
     unittest.main()

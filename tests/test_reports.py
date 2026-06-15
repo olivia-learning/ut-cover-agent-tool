@@ -28,6 +28,14 @@ class ReportTests(unittest.TestCase):
                     "total_lines": 10,
                     "files": [{"path": "src/app.py", "missing_lines": [10]}],
                 },
+                "coverage_gate": {
+                    "status": "passed",
+                    "ok": True,
+                    "next_action": "continue",
+                    "required_overall_percent": 80.0,
+                    "changed_files_required_percent": 85.0,
+                    "failed_files": [],
+                },
             },
             ["tests/test_app.py"],
         )
@@ -36,6 +44,8 @@ class ReportTests(unittest.TestCase):
         self.assertIn("90.00%", markdown)
         self.assertIn("tests/test_app.py", markdown)
         self.assertIn("src/app.py", markdown)
+        self.assertIn("Coverage Gate", markdown)
+        self.assertIn("continue", markdown)
 
 
 if __name__ == "__main__":

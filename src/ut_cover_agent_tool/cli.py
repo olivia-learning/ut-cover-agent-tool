@@ -9,10 +9,21 @@ from typing import Any
 from . import __version__
 from .commands import run_shell
 from .config import DEFAULT_CONFIG_NAME, load_config
+from .config_writer import update_config_values
 from .coverage import parse_coverage_report
+from .coverage_gate import evaluate_coverage_gate
 from .errors import ToolUnavailableError, UtCoverError
 from .git_tools import analyze_commits, ensure_git_available, ensure_git_repo, parse_commit_inputs
 from .presets import CONFIG_PRESETS, detect_preset, render_config
+from .remote import (
+    ai_ssh_mcp_available,
+    create_remote_backend,
+    diagnose_remote_failure,
+    fetch_remote_artifacts,
+    remote_workspace_for,
+    run_remote_commands,
+    sync_workspace,
+)
 from .reports import build_report_payload, read_json, render_markdown, write_json, write_markdown
 from .test_planning import build_test_plan, render_test_plan_markdown, review_touched_tests
 
@@ -50,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
     init_config.add_argument("--coverage-report", help="Override the preset coverage report path.")
     init_config.set_defaults(func=cmd_init_config)
 
+    coverage_goal = subparsers.add_parser("set-coverage-goal", help="Write user-approved coverage goals to config.")
+    coverage_goal.add_argument("--repo", default=".", help="Target repository path.")
+    coverage_goal.add_argument("--overall", type=float, required=True, help="Required overall line coverage percent.")
+    coverage_goal.add_argument("--changed-files", type=float, required=True, help="Required changed-files line coverage percent.")
+    coverage_goal.add_argument("--unknown-action", choices=["warn", "fail"], default="warn", help="What to do when coverage cannot be evaluated.")
+    coverage_goal.set_defaults(func=cmd_set_coverage_goal)
+
     analyze = subparsers.add_parser("analyze-commits", help="Analyze commit diffs.")
     add_common(analyze)
     analyze.add_argument("--commit", "--commits", dest="commits", action="append", help="Commit id(s), comma or whitespace separated.")
@@ -62,6 +80,36 @@ def build_parser() -> argparse.ArgumentParser:
     coverage.add_argument("--output", default=".ut-cover/coverage.json", help="Coverage result JSON output path.")
     coverage.add_argument("--timeout", type=int, default=None, help="Command timeout in seconds.")
     coverage.set_defaults(func=cmd_run_coverage)
+
+    remote_doctor = subparsers.add_parser("remote-doctor", help="Check remote execution configuration.")
+    add_common(remote_doctor)
+    remote_doctor.set_defaults(func=cmd_remote_doctor)
+
+    remote_sync = subparsers.add_parser("remote-sync", help="Sync local workspace to remote Linux executor.")
+    add_common(remote_sync)
+    remote_sync.add_argument("--run-id", help="Run id. Defaults to timestamp.")
+    remote_sync.add_argument("--output", default=".ut-cover/remote-sync.json", help="Remote sync JSON output.")
+    remote_sync.set_defaults(func=cmd_remote_sync)
+
+    remote_run = subparsers.add_parser("remote-run", help="Run remote build and DT commands.")
+    add_common(remote_run)
+    remote_run.add_argument("--remote-workspace", help="Remote workspace path. Defaults to latest sync output.")
+    remote_run.add_argument("--timeout", type=int, default=None, help="Remote command timeout in seconds.")
+    remote_run.add_argument("--output", default=".ut-cover/remote-run.json", help="Remote run JSON output.")
+    remote_run.set_defaults(func=cmd_remote_run)
+
+    remote_fetch = subparsers.add_parser("remote-fetch", help="Fetch remote logs and reports.")
+    add_common(remote_fetch)
+    remote_fetch.add_argument("--remote-workspace", help="Remote workspace path. Defaults to latest sync/run output.")
+    remote_fetch.add_argument("--output", default=".ut-cover/remote-fetch.json", help="Remote fetch JSON output.")
+    remote_fetch.set_defaults(func=cmd_remote_fetch)
+
+    remote_diagnose = subparsers.add_parser("remote-diagnose", help="Diagnose remote build or DT failure.")
+    add_common(remote_diagnose)
+    remote_diagnose.add_argument("--remote-run", default=".ut-cover/remote-run.json", help="Remote run JSON path.")
+    remote_diagnose.add_argument("--log", action="append", default=[], help="Local log file to include. May be repeated.")
+    remote_diagnose.add_argument("--output", default=".ut-cover/remote-diagnosis.json", help="Remote diagnosis JSON output.")
+    remote_diagnose.set_defaults(func=cmd_remote_diagnose)
 
     plan_tests = subparsers.add_parser("plan-tests", help="Find local UT neighbors and produce a safe test plan.")
     add_common(plan_tests)
@@ -173,6 +221,25 @@ def cmd_init_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_coverage_goal(args: argparse.Namespace) -> int:
+    _validate_percent(args.overall, "overall")
+    _validate_percent(args.changed_files, "changed-files")
+    output = update_config_values(
+        args.repo,
+        {
+            "coverage_threshold": args.overall,
+            "changed_files_coverage_threshold": args.changed_files,
+            "coverage_fail_below_threshold": True,
+            "coverage_unknown_action": args.unknown_action,
+        },
+    )
+    print(f"Wrote coverage goal: {output}")
+    print(f"Overall: {args.overall:.2f}%")
+    print(f"Changed files: {args.changed_files:.2f}%")
+    print(f"Unknown action: {args.unknown_action}")
+    return 0
+
+
 def cmd_analyze_commits(args: argparse.Namespace) -> int:
     commits = parse_commit_inputs(args.commits, args.commit_file)
     if not commits:
@@ -192,22 +259,151 @@ def cmd_analyze_commits(args: argparse.Namespace) -> int:
 def cmd_run_coverage(args: argparse.Namespace) -> int:
     repo = Path(args.repo).resolve()
     config = load_config(repo, args.config)
+    if config.execution_mode == "remote":
+        return cmd_run_remote_coverage(args, repo, config)
+
     command = config.coverage_command or config.test_command
     if not command:
         raise UtCoverError("No coverage_command or test_command configured.")
     result = run_shell(command, repo, timeout=args.timeout)
     coverage_path = (repo / config.coverage_report).resolve()
     coverage_summary = parse_coverage_report(coverage_path) if coverage_path.exists() else None
+    analysis = _read_optional_json(_resolve_output(repo, ".ut-cover/analysis.json"))
+    coverage_dict = coverage_summary.to_dict() if coverage_summary else None
+    coverage_gate = evaluate_coverage_gate(config, coverage_dict, analysis)
     payload = {
         "repo": str(repo),
         "config": config.to_dict(),
         "test_result": result.to_dict(),
-        "coverage": coverage_summary.to_dict() if coverage_summary else None,
+        "coverage": coverage_dict,
+        "coverage_gate": coverage_gate,
     }
     output = _resolve_output(repo, args.output)
     write_json(payload, output)
     print(f"Wrote coverage result: {output}")
-    return 0 if result.ok else result.exit_code
+    if not result.ok:
+        return result.exit_code
+    return 0 if coverage_gate.get("ok", True) else 1
+
+
+def cmd_run_remote_coverage(args: argparse.Namespace, repo: Path, config) -> int:
+    backend = create_remote_backend(config)
+    try:
+        sync = sync_workspace(repo, config, backend)
+        write_json(sync, _resolve_output(repo, ".ut-cover/remote-sync.json"))
+        remote_run = run_remote_commands(config, backend, sync["remote_workspace"], timeout=args.timeout)
+        write_json(remote_run, _resolve_output(repo, ".ut-cover/remote-run.json"))
+        fetched = fetch_remote_artifacts(repo, config, backend, sync["remote_workspace"])
+        write_json(fetched, _resolve_output(repo, ".ut-cover/remote-fetch.json"))
+    finally:
+        backend.close()
+
+    coverage_path = _find_fetched_coverage(repo, config)
+    coverage_summary = parse_coverage_report(coverage_path) if coverage_path else None
+    analysis = _read_optional_json(_resolve_output(repo, ".ut-cover/analysis.json"))
+    coverage_dict = coverage_summary.to_dict() if coverage_summary else None
+    coverage_gate = evaluate_coverage_gate(config, coverage_dict, analysis)
+    payload = {
+        "repo": str(repo),
+        "config": config.to_dict(),
+        "test_result": remote_run.get("dt_result") or remote_run.get("build_result"),
+        "remote_sync": sync,
+        "remote_run": remote_run,
+        "remote_fetch": fetched,
+        "coverage": coverage_dict,
+        "coverage_gate": coverage_gate,
+    }
+    output = _resolve_output(repo, args.output)
+    write_json(payload, output)
+    print(f"Wrote coverage result: {output}")
+    if not remote_run["ok"]:
+        diagnosis = diagnose_remote_failure(remote_run)
+        write_json(diagnosis, _resolve_output(repo, ".ut-cover/remote-diagnosis.json"))
+        return 1
+    return 0 if coverage_gate.get("ok", True) else 1
+
+
+def cmd_remote_doctor(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    backend_available = ai_ssh_mcp_available() if config.remote_backend == "ai_ssh_mcp" else False
+    checks = [
+        {"name": "execution_mode", "ok": config.execution_mode == "remote", "message": config.execution_mode},
+        {"name": "remote_backend", "ok": config.remote_backend == "ai_ssh_mcp", "message": config.remote_backend},
+        {
+            "name": "ai_ssh_mcp",
+            "ok": backend_available,
+            "message": "ai_ssh_mcp importable"
+            if backend_available
+            else "ai_ssh_mcp is not importable. Install or keep it beside Create_tool/src.",
+        },
+        {"name": "remote_workspace_root", "ok": bool(config.remote_workspace_root), "message": config.remote_workspace_root},
+        {
+            "name": "remote_commands",
+            "ok": bool(config.remote_build_command or config.remote_dt_command),
+            "message": "remote_build_command or remote_dt_command is configured"
+            if (config.remote_build_command or config.remote_dt_command)
+            else "Configure remote_build_command and/or remote_dt_command.",
+        },
+    ]
+    ok = all(item["ok"] for item in checks)
+    print(json.dumps({"ok": ok, "checks": checks, "next_action": "continue" if ok else "stop"}, ensure_ascii=False, indent=2))
+    return 0 if ok else 1
+
+
+def cmd_remote_sync(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    backend = create_remote_backend(config)
+    try:
+        result = sync_workspace(repo, config, backend, run_id=args.run_id)
+    finally:
+        backend.close()
+    output = write_json(result, _resolve_output(repo, args.output))
+    print(f"Wrote remote sync: {output}")
+    return 0
+
+
+def cmd_remote_run(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    remote_workspace = args.remote_workspace or _latest_remote_workspace(repo, config)
+    backend = create_remote_backend(config)
+    try:
+        result = run_remote_commands(config, backend, remote_workspace, timeout=args.timeout)
+    finally:
+        backend.close()
+    output = write_json(result, _resolve_output(repo, args.output))
+    print(f"Wrote remote run: {output}")
+    return 0 if result["ok"] else 1
+
+
+def cmd_remote_fetch(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    remote_workspace = args.remote_workspace or _latest_remote_workspace(repo, config)
+    backend = create_remote_backend(config)
+    try:
+        result = fetch_remote_artifacts(repo, config, backend, remote_workspace)
+    finally:
+        backend.close()
+    output = write_json(result, _resolve_output(repo, args.output))
+    print(f"Wrote remote fetch: {output}")
+    return 0 if result["ok"] else 1
+
+
+def cmd_remote_diagnose(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    remote_run = read_json(_resolve_output(repo, args.remote_run))
+    log_text = "\n".join(
+        Path(path).read_text(encoding="utf-8", errors="replace")
+        for path in args.log
+        if Path(path).exists()
+    )
+    result = diagnose_remote_failure(remote_run, fetched_text=log_text)
+    output = write_json(result, _resolve_output(repo, args.output))
+    print(f"Wrote remote diagnosis: {output}")
+    return 0 if result["ok"] else 1
 
 
 def cmd_plan_tests(args: argparse.Namespace) -> int:
@@ -270,3 +466,35 @@ def _resolve_output(repo: Path, output: str) -> Path:
     if not path.is_absolute():
         path = repo / path
     return path.resolve()
+
+
+def _validate_percent(value: float, field: str) -> None:
+    if value < 0 or value > 100:
+        raise UtCoverError(f"{field} must be between 0 and 100")
+
+
+def _read_optional_json(path: Path) -> dict[str, Any] | None:
+    return read_json(path) if path.exists() else None
+
+
+def _latest_remote_workspace(repo: Path, config) -> str:
+    sync_path = _resolve_output(repo, ".ut-cover/remote-sync.json")
+    if sync_path.exists():
+        data = read_json(sync_path)
+        if data.get("remote_workspace"):
+            return data["remote_workspace"]
+    return remote_workspace_for(repo, config, "latest")
+
+
+def _find_fetched_coverage(repo: Path, config) -> Path | None:
+    remote_root = repo / ".ut-cover" / "remote"
+    candidates = [
+        remote_root / config.coverage_report.replace("/", "_"),
+        remote_root / Path(config.coverage_report).name,
+    ]
+    candidates.extend(remote_root.glob("*.xml"))
+    candidates.extend(remote_root.glob("*.json"))
+    for candidate in candidates:
+        if candidate.exists() and candidate.name not in {"remote-run.json", "remote-fetch.json"}:
+            return candidate
+    return None

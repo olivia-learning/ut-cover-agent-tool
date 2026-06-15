@@ -1,14 +1,12 @@
-# Copy this file to the target repository root as .ut-cover.yaml and edit it.
+# 示例配置。新手优先使用 `ut-cover init-config --repo <目标仓库>` 自动生成，
+# 不建议手动复制后直接使用。
 
-# Run this when only test status is needed.
 test_command: "python -m unittest discover"
 
-# Prefer a command that writes coverage_report.
-# Python example:
+# 推荐填写能生成 coverage_report 的命令。
+# Python 示例：
 # coverage_command: "python -m coverage run -m unittest discover && python -m coverage json -o coverage.json"
 coverage_command: ""
-
-# Supported first: coverage.py JSON and Cobertura XML.
 coverage_report: "coverage.json"
 
 source_dirs:
@@ -19,11 +17,12 @@ test_dirs:
 
 exclude:
   - ".venv"
+  - "venv"
   - "node_modules"
   - "dist"
   - "build"
 
-# Keep weak AI from mimicking DT/integration/e2e tests in large repositories.
+# 防止弱 AI 在大仓库里误模仿 DT/integration/e2e。
 unit_test_include: []
 unit_test_exclude: []
 dt_test_patterns:
@@ -37,5 +36,37 @@ dt_test_patterns:
   - "*scenario*"
   - "*acceptance*"
 preferred_test_roots: []
+
+# 覆盖率目标由主 AI 询问用户后用 set-coverage-goal 写入。
+coverage_threshold: ""
+changed_files_coverage_threshold: ""
+coverage_fail_below_threshold: true
+coverage_unknown_action: "warn"
+
+# 默认本地执行。Windows 不能编译时可切换到 remote。
+execution_mode: "local"
+remote_backend: "ai_ssh_mcp"
+remote_workspace_root: "/tmp/ut-cover"
+remote_build_command: ""
+remote_dt_command: ""
+remote_artifacts:
+  - "coverage.xml"
+  - "coverage.json"
+  - "build.log"
+  - "dt.log"
+
+# 远端同步当前 Windows 工作区，包括未提交测试修改。
+sync_include:
+  - "**/*"
+sync_exclude:
+  - ".git/**"
+  - ".venv/**"
+  - "venv/**"
+  - "node_modules/**"
+  - "build/**"
+  - "dist/**"
+  - ".ut-cover/**"
+  - "__pycache__/**"
+remote_clean_before_sync: true
 
 report_dir: ".ut-cover/reports"

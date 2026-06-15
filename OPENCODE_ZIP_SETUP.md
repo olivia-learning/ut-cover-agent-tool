@@ -1,258 +1,179 @@
-# OpenCode 主 AI 使用 ZIP 安装配置指南
+# OpenCode 主 AI 使用 ZIP 指南
 
-这份文档给 OpenCode 的主 AI 使用，用于从 `ut-cover-agent-tool.zip` 安装并配置 UT 覆盖率工具。
+这份文档给 OpenCode 的主 AI 使用。目标是让主 AI 即使能力较弱，也能按固定步骤安装、配置和调用 `ut-cover`，不要自由发挥。
 
-如果用户只是想了解工具能力，请读 `README.md`。
-如果用户已经要执行“给 commit 补 UT 并算覆盖率”，请在安装完成后调用 `.opencode/agents/ut-coverage-writer.md` 对应的子代理。
+## 角色分工
 
-## 目标
+- 主 AI：安装 ZIP、生成配置、询问覆盖率目标、调用固定命令、根据 `next_action` 决定继续或停止。
+- `ut-cover` CLI：做 git 分析、测试邻居扫描、覆盖率解析、远端同步/执行/拉回、报告生成。
+- `ut-coverage-writer` 子代理：只根据高置信度 UT 邻居写或修改测试。
 
-把 `ut-cover-agent-tool.zip` 解压成一个独立工具目录，安装 Python CLI，使 `ut-cover` 命令可用，然后指导用户把 `.ut-cover.yaml` 配到真正要补 UT 的目标仓库。
+## 安装 ZIP
 
-## 目录概念
-
-需要区分两个目录：
-
-```text
-工具目录：安装 ut-cover-agent-tool 的地方
-目标仓库：用户真正要补 UT、算覆盖率的业务代码仓库
-```
-
-示例：
-
-```text
-C:\Tools\ut-cover-agent-tool        # 工具目录
-C:\Work\my-product-repo             # 目标仓库
-```
-
-不要把工具源码复制进目标仓库。目标仓库只需要一个 `.ut-cover.yaml` 配置文件和运行后生成的 `.ut-cover/` 报告目录。
-
-## 安装步骤
-
-1. 询问或确认用户希望把 ZIP 解压到哪里。推荐：
+1. 确认工具目录，例如：
 
 ```text
 C:\Tools\ut-cover-agent-tool
 ```
 
-2. 解压 `ut-cover-agent-tool.zip`，确认工具目录里存在：
+2. 解压 ZIP 后确认这些文件存在：
 
 ```text
 pyproject.toml
 README.md
 OPENCODE_ZIP_SETUP.md
+REMOTE_WORKFLOW.md
 examples\.ut-cover.yaml
 .opencode\agents\ut-coverage-writer.md
 src\ut_cover_agent_tool\
 ```
 
-3. 在工具目录安装：
+3. 安装：
 
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\python -m pip install -U pip
 .\.venv\Scripts\python -m pip install -e .
-```
-
-如果没有 `py`，查找 Python 3.10+ 并使用完整路径。
-
-4. 验证 CLI：
-
-```powershell
 ut-cover --version
 ```
 
-如果当前 shell 找不到 `ut-cover`，优先使用工具目录里的 Python 运行：
+如果 `ut-cover` 不可用，用：
 
 ```powershell
 .\.venv\Scripts\python -m ut_cover_agent_tool --version
 ```
 
-## Git 处理
-
-先运行：
-
-```powershell
-ut-cover doctor --repo <目标仓库路径>
-```
-
-如果提示找不到 Git，不要直接认定用户没安装 Git。按顺序检查：
-
-1. `PATH` 中是否有 `git.exe`。
-2. `UT_COVER_GIT` 是否已设置。
-3. GitHub Desktop 自带 Git，例如：
-
-```text
-C:\Users\<USER>\AppData\Local\GitHubDesktop\app-*\resources\app\git\cmd\git.exe
-```
-
-4. Program Files Git、Scoop、Chocolatey 常见安装路径。
-
-本工具已经内置这些查找逻辑。`doctor` 成功找到 Git 时会显示实际使用的 `git.exe` 路径。
-
-如果仍找不到，可以让用户设置：
-
-```powershell
-$env:UT_COVER_GIT="C:\path\to\git.exe"
-```
-
 ## 配置目标仓库
 
-新手优先使用自动生成配置，不要让用户手工复制文件。
+目标仓库是真正要补 UT 的业务代码仓，不是工具目录。
+
+不要让新手手动复制示例配置。先执行：
 
 ```powershell
-ut-cover init-config --repo C:\Work\my-product-repo
+ut-cover init-config --repo <目标仓库>
 ```
 
-这个命令会在目标仓库根目录生成：
+然后执行：
+
+```powershell
+ut-cover doctor --repo <目标仓库>
+```
+
+如果项目是 C++，主 AI 必须查看 README、CI、CMakePresets、构建脚本后再调整 `.ut-cover.yaml`。不要盲套默认 CMake 命令。
+
+## 覆盖率目标必须询问用户
+
+如果 `.ut-cover.yaml` 没有覆盖率目标，主 AI 必须问用户：
 
 ```text
-C:\Work\my-product-repo\.ut-cover.yaml
+整体覆盖率目标是多少？如果不知道，我建议 80%。
+本次变更文件覆盖率目标是多少？如果不知道，我建议 85%。
+覆盖率无法判断时，是只警告还是直接失败？如果不知道，我建议 warn。
 ```
 
-默认使用自动识别。主 AI 不应该让新手自己判断语言，应该先运行：
+用户不知道时执行：
 
 ```powershell
-ut-cover init-config --repo C:\Work\my-product-repo
+ut-cover set-coverage-goal --repo <目标仓库> --overall 80 --changed-files 85 --unknown-action warn
 ```
 
-工具会根据目标仓库文件自动选择常见预设：
+不要让用户手动改 YAML。
 
-- `cpp-cmake-gcovr`：发现 `CMakeLists.txt` 或 C/C++ 源码文件。
-- `python-pytest`：发现 pytest 配置或依赖。
-- `node-jest`：发现 Jest 配置或依赖。
-- `python-unittest`：无法判断时的默认值。
-
-如果主 AI 已经从仓库文件判断出测试框架，也可以显式选择：
+## 本地模式固定流程
 
 ```powershell
-ut-cover init-config --repo C:\Work\my-product-repo --preset python-unittest
-ut-cover init-config --repo C:\Work\my-product-repo --preset python-pytest
-ut-cover init-config --repo C:\Work\my-product-repo --preset node-jest
-ut-cover init-config --repo C:\Work\my-product-repo --preset cpp-cmake-gcovr
+ut-cover init-config --repo <repo>
+ut-cover set-coverage-goal --repo <repo> --overall <n> --changed-files <n> --unknown-action warn
+ut-cover doctor --repo <repo>
+ut-cover analyze-commits --repo <repo> --commit <ids>
+ut-cover inspect-tests --repo <repo>
+ut-cover plan-tests --repo <repo>
 ```
 
-如果目标仓库已经有明确测试命令，可以直接覆盖预设命令：
+读 `.ut-cover/test-plan.json`：
+
+- 只有高置信度 UT 候选时，才允许调用子代理写测试。
+- 每个新增测试只能模仿 1-3 个高置信度 UT 文件。
+- 如果状态是 `low_confidence`，必须停止，告诉用户没有安全可模仿的 UT 来源。
+- 禁止模仿 DT、integration、e2e、system、device、driver、hardware、scenario、acceptance。
+
+写完测试后：
 
 ```powershell
-ut-cover init-config --repo C:\Work\my-product-repo `
-  --test-command "项目自己的测试命令" `
-  --coverage-command "项目自己的覆盖率命令"
+ut-cover run-coverage --repo <repo>
+ut-cover review-tests --repo <repo> --touched-test <测试文件>
+ut-cover report --analysis <repo>\.ut-cover\analysis.json --coverage <repo>\.ut-cover\coverage.json --touched-test <测试文件>
 ```
 
-生成后的 `.ut-cover.yaml` 内容类似：
+如果 `run-coverage` 或 `review-tests` 失败，必须读取 JSON 里的 `next_action`。不要猜。
+
+## 远端模式固定流程
+
+当 Windows 本地无法编译，而需要同步到 Linux 执行机时：
+
+1. 确认已有 `Create_tool` 的 `ai_ssh_mcp` 可用。
+2. 在目标仓库 `.ut-cover.yaml` 设置：
 
 ```yaml
-test_command: "项目自己的测试命令"
-coverage_command: "项目自己的覆盖率命令，并生成 coverage_report"
-coverage_report: "coverage.json 或 coverage.xml"
-source_dirs: ["源码目录"]
-test_dirs: ["测试目录"]
-exclude: [".venv", "node_modules", "dist", "build"]
-report_dir: ".ut-cover/reports"
+execution_mode: 'remote'
+remote_backend: 'ai_ssh_mcp'
+remote_workspace_root: '/tmp/ut-cover'
+remote_build_command: '<项目自己的远端构建命令>'
+remote_dt_command: '<项目自己的远端 DT 或覆盖率命令>'
+remote_artifacts:
+  - 'coverage.xml'
+  - 'build.log'
+  - 'dt.log'
 ```
 
-重点是 `coverage_command` 必须能生成 `coverage_report` 指向的文件。
-
-Python 示例：
-
-```yaml
-test_command: "python -m unittest discover"
-coverage_command: "python -m coverage run -m unittest discover && python -m coverage json -o coverage.json"
-coverage_report: "coverage.json"
-source_dirs: ["src"]
-test_dirs: ["tests"]
-exclude: [".venv", "node_modules", "dist", "build"]
-report_dir: ".ut-cover/reports"
-```
-
-Windows 下如果命令包含反斜杠路径，优先用单引号，避免 YAML 双引号把 `\U` 当作转义。
-
-## C++ 仓库处理规则
-
-本工具支持 C++，但 C++ 覆盖率依赖项目自己的构建方式。
-
-自动识别到 C++/CMake 后，会生成类似配置：
-
-```yaml
-test_command: 'ctest --test-dir build --output-on-failure'
-coverage_command: 'gcovr -r . --xml-pretty -o coverage.xml'
-coverage_report: 'coverage.xml'
-source_dirs:
-  - 'src'
-  - 'include'
-test_dirs:
-  - 'tests'
-  - 'test'
-```
-
-主 AI 必须检查目标仓库是否已经有 build 目录、CMake preset、CI 脚本或 README 构建说明。
-
-如果没有现成 build，先不要盲目运行覆盖率。应根据仓库实际情况补充构建步骤，例如：
+3. 执行：
 
 ```powershell
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build
-ctest --test-dir build --output-on-failure
-gcovr -r . --xml-pretty -o coverage.xml
+ut-cover remote-doctor --repo <repo>
+ut-cover run-coverage --repo <repo>
 ```
 
-如果项目使用 MSVC、Bazel、Makefile、Ninja、多平台脚本或自定义测试框架，主 AI 应改写 `.ut-cover.yaml` 中的命令，而不是强行套用 CMake/gcovr 默认值。
+`run-coverage` 会自动同步、远端运行、拉回产物、解析覆盖率。
 
-## 验证目标仓库
-
-配置后运行：
+如果失败：
 
 ```powershell
-ut-cover doctor --repo C:\Work\my-product-repo
+ut-cover remote-diagnose --repo <repo>
 ```
 
-期望结果：
+按 `next_action`：
 
-- Git 可用。
-- 目标路径是 git 仓库。
-- `.ut-cover.yaml` 已找到。
-- `test_command` 或 `coverage_command` 已配置。
+- `fix_test_code`：只允许修测试。
+- `ask_user_environment`：停止，让用户处理远端环境或路径。
+- `continue`：继续下一步。
+- `stop`：停止并说明原因。
 
-覆盖率报告不存在不一定是错误，因为第一次运行覆盖率前通常还没有报告文件。
+远端详细步骤见 `REMOTE_WORKFLOW.md`。
 
-## 交给子代理执行 UT 工作
+## 调用子代理
 
-安装和配置完成后，让 OpenCode 使用子代理：
+当 `plan-tests` 给出高置信度 UT 候选后，主 AI 可以这样调用：
 
 ```text
-Use ut-coverage-writer. For repo C:\Work\my-product-repo, add UT for commits abc123 def456 and calculate coverage.
+Use ut-coverage-writer. For repo <repo>, add UT for commits <ids> and calculate coverage.
 ```
 
-子代理必须按 `.opencode\agents\ut-coverage-writer.md` 中的流程执行：
+子代理必须遵守 `.opencode/agents/ut-coverage-writer.md`，尤其是：
 
-1. `ut-cover doctor`
-2. `ut-cover analyze-commits`
-3. `ut-cover inspect-tests`
-4. `ut-cover plan-tests`
-5. 只模仿 test plan 中的高置信度 UT 邻居
-6. 如果某个变更文件是 `low_confidence`，停下来说明没有安全可模仿的 UT 来源
-7. 新增或修改 UT
-8. `ut-cover run-coverage`
-9. `ut-cover review-tests`
-10. 失败则迭代修复
-11. `ut-cover report`
+- 写 UT 前列出模仿来源文件。
+- 只模仿高置信度 UT。
+- 不模仿 DT/集成测试。
+- 新测试必须有明确断言。
+- 远端失败先诊断，不猜原因。
 
-主 AI 不要要求子代理总结全仓库测试风格。大仓库里 UT/DT/集成测试混杂时，必须只做局部最近邻扫描，并禁止模仿 DT、integration、e2e、system、device、driver、hardware、scenario、acceptance 测试。
+## 常见停止条件
 
-## 常见输出位置
+遇到以下情况，主 AI 应停止并说明，而不是硬写：
 
-默认情况下，目标仓库会生成：
-
-```text
-.ut-cover\analysis.json
-.ut-cover\test-neighbors.json
-.ut-cover\test-plan.json
-.ut-cover\test-plan.md
-.ut-cover\test-review.json
-.ut-cover\coverage.json
-.ut-cover\reports\ut-coverage-report.md
-.ut-cover\reports\ut-coverage-report.json
-```
-
-这些是运行产物，不需要放进工具 ZIP。
+- 找不到 Git。
+- 目标仓库不是 git 仓库。
+- 没有高置信度 UT 邻居。
+- 只有 DT/integration/e2e 候选。
+- C++ 构建方式不明确。
+- 远端缺依赖、路径错误、权限错误。
+- 覆盖率报告无法解析且用户选择 unknown 为 fail。

@@ -23,6 +23,9 @@ class PackageZipTests(unittest.TestCase):
                 names = archive.namelist()
         self.assertTrue(all(name.startswith("ut-cover-agent-tool/") for name in names))
         self.assertFalse(any(name.startswith("src/ai_ssh_mcp") for name in names))
+        self.assertIn("ut-cover-agent-tool/OPENCODE_ZIP_SETUP.md", names)
+        self.assertIn("ut-cover-agent-tool/REMOTE_WORKFLOW.md", names)
+        self.assertIn("ut-cover-agent-tool/.opencode/agents/ut-coverage-writer.md", names)
 
 
 if __name__ == "__main__":

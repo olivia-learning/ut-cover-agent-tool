@@ -24,10 +24,12 @@ def build_report_payload(
     commits = analysis.get("commits", []) if analysis else []
     coverage_summary = coverage.get("coverage", {}) if coverage else {}
     test_result = coverage.get("test_result", {}) if coverage else {}
+    coverage_gate = coverage.get("coverage_gate", {}) if coverage else {}
     return {
         "commits": commits,
         "test_result": test_result,
         "coverage": coverage_summary,
+        "coverage_gate": coverage_gate,
         "touched_tests": touched_tests or [],
     }
 
@@ -71,6 +73,31 @@ def render_markdown(payload: dict[str, Any]) -> str:
         )
     else:
         lines.extend(["- Coverage report not available", ""])
+
+    gate = payload.get("coverage_gate") or {}
+    lines.extend(["## Coverage Gate", ""])
+    if gate:
+        lines.extend(
+            [
+                f"- Status: {gate.get('status', 'unknown')}",
+                f"- OK: {gate.get('ok')}",
+                f"- Next action: `{gate.get('next_action', '')}`",
+            ]
+        )
+        if gate.get("required_overall_percent") is not None:
+            lines.append(f"- Required overall: {gate.get('required_overall_percent')}%")
+        if gate.get("changed_files_required_percent") is not None:
+            lines.append(f"- Required changed files: {gate.get('changed_files_required_percent')}%")
+        failed_files = gate.get("failed_files") or []
+        if failed_files:
+            lines.append("- Failed files:")
+            for item in failed_files:
+                lines.append(
+                    f"  - `{item.get('path')}` {item.get('percent')}% < {item.get('required_percent')}%"
+                )
+        lines.append("")
+    else:
+        lines.extend(["- Not configured or not evaluated", ""])
 
     lines.extend(["## Commits", ""])
     for commit in payload.get("commits", []):

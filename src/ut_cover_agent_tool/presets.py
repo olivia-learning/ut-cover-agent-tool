@@ -99,6 +99,33 @@ CONFIG_PRESETS: dict[str, dict[str, object]] = {
     },
 }
 
+for _preset in CONFIG_PRESETS.values():
+    _preset.setdefault("coverage_threshold", "")
+    _preset.setdefault("changed_files_coverage_threshold", "")
+    _preset.setdefault("coverage_fail_below_threshold", True)
+    _preset.setdefault("coverage_unknown_action", "warn")
+    _preset.setdefault("execution_mode", "local")
+    _preset.setdefault("remote_backend", "ai_ssh_mcp")
+    _preset.setdefault("remote_workspace_root", "/tmp/ut-cover")
+    _preset.setdefault("remote_build_command", "")
+    _preset.setdefault("remote_dt_command", "")
+    _preset.setdefault("remote_artifacts", ["coverage.xml", "coverage.json", "build.log", "dt.log"])
+    _preset.setdefault("sync_include", ["**/*"])
+    _preset.setdefault(
+        "sync_exclude",
+        [
+            ".git/**",
+            ".venv/**",
+            "venv/**",
+            "node_modules/**",
+            "build/**",
+            "dist/**",
+            ".ut-cover/**",
+            "__pycache__/**",
+        ],
+    )
+    _preset.setdefault("remote_clean_before_sync", True)
+
 
 def detect_preset(repo: str | Path) -> str:
     repo_path = Path(repo).resolve()
@@ -161,6 +188,29 @@ def render_config(
             "",
             "preferred_test_roots:",
             *[f"  - {quote_yaml(str(item))}" for item in data["preferred_test_roots"]],
+            "",
+            "# Coverage goals are written by `ut-cover set-coverage-goal` after the AI asks the user.",
+            f"coverage_threshold: {quote_yaml(str(data['coverage_threshold']))}",
+            f"changed_files_coverage_threshold: {quote_yaml(str(data['changed_files_coverage_threshold']))}",
+            f"coverage_fail_below_threshold: {str(data['coverage_fail_below_threshold']).lower()}",
+            f"coverage_unknown_action: {quote_yaml(str(data['coverage_unknown_action']))}",
+            "",
+            "# Remote mode is optional. Keep local unless Windows cannot build/run tests.",
+            f"execution_mode: {quote_yaml(str(data['execution_mode']))}",
+            f"remote_backend: {quote_yaml(str(data['remote_backend']))}",
+            f"remote_workspace_root: {quote_yaml(str(data['remote_workspace_root']))}",
+            f"remote_build_command: {quote_yaml(str(data['remote_build_command']))}",
+            f"remote_dt_command: {quote_yaml(str(data['remote_dt_command']))}",
+            "remote_artifacts:",
+            *[f"  - {quote_yaml(str(item))}" for item in data["remote_artifacts"]],
+            "",
+            "sync_include:",
+            *[f"  - {quote_yaml(str(item))}" for item in data["sync_include"]],
+            "",
+            "sync_exclude:",
+            *[f"  - {quote_yaml(str(item))}" for item in data["sync_exclude"]],
+            "",
+            f"remote_clean_before_sync: {str(data['remote_clean_before_sync']).lower()}",
             "",
             f"report_dir: {quote_yaml(str(data['report_dir']))}",
             "",

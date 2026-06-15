@@ -63,6 +63,29 @@ class TestPlanningTests(unittest.TestCase):
         self.assertEqual(entry["recommended_neighbors"], [])
         self.assertEqual(entry["blocked_non_unit_candidates"][0]["classification"], "non_unit")
 
+    def test_autonomous_mode_uses_minimal_template_when_only_dt_neighbor_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".ut-cover.yaml").write_text("interaction_mode: autonomous\n", encoding="utf-8")
+            (repo / "src").mkdir()
+            (repo / "tests" / "integration").mkdir(parents=True)
+            (repo / "src" / "device.py").write_text("def run(): pass\n", encoding="utf-8")
+            (repo / "tests" / "integration" / "test_device.py").write_text(
+                "def test_device():\n    assert True\n",
+                encoding="utf-8",
+            )
+            config = load_config(repo)
+            plan = build_test_plan(repo, config, analysis_for("src/device.py"))
+
+        entry = plan["entries"][0]
+        self.assertEqual(entry["status"], "minimal_template")
+        self.assertEqual(entry["action"], "create_minimal_unit_template")
+        self.assertEqual(
+            entry["minimal_template"]["risk_marker"],
+            "no_high_confidence_neighbor_used_minimal_template",
+        )
+        self.assertEqual(entry["recommended_neighbors"], [])
+
     def test_include_can_mark_custom_unit_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

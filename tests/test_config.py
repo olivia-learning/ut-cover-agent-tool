@@ -15,6 +15,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.execution_mode, "local")
         self.assertEqual(config.remote_backend, "ai_ssh_mcp")
         self.assertEqual(config.remote_workspace_root, "/tmp/ut-cover")
+        self.assertEqual(config.interaction_mode, "interactive")
+        self.assertEqual(config.autonomous_recovery_commands, [])
+        self.assertEqual(config.autonomous_max_iterations, 5)
+        self.assertEqual(config.autonomous_low_confidence_action, "minimal_template")
         self.assertIsNone(config.config_path)
 
     def test_load_yaml_config(self):
@@ -57,6 +61,10 @@ class ConfigTests(unittest.TestCase):
                         "sync_exclude:",
                         "  - build/**",
                         "remote_clean_before_sync: false",
+                        "interaction_mode: autonomous",
+                        "autonomous_recovery_commands:",
+                        "  - source /opt/env.sh",
+                        "autonomous_max_iterations: 3",
                     ]
                 ),
                 encoding="utf-8",
@@ -72,6 +80,9 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.sync_include, ["src/**"])
         self.assertEqual(config.sync_exclude, ["build/**"])
         self.assertFalse(config.remote_clean_before_sync)
+        self.assertEqual(config.interaction_mode, "autonomous")
+        self.assertEqual(config.autonomous_recovery_commands, ["source /opt/env.sh"])
+        self.assertEqual(config.autonomous_max_iterations, 3)
 
 
 if __name__ == "__main__":

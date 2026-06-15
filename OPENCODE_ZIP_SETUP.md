@@ -10,6 +10,8 @@
 
 ## 安装 ZIP
 
+如果新电脑上已经安装过旧版 `ut-cover-agent-tool`，不要按首次安装流程直接覆盖目录。请先阅读并执行 `OPENCODE_UPGRADE.md`。
+
 1. 确认工具目录，例如：
 
 ```text

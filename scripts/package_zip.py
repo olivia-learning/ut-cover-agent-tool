@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import shutil
+import subprocess
+import time
 import zipfile
 from pathlib import Path
 
@@ -38,10 +42,17 @@ def main() -> int:
         output.unlink()
 
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        names: list[str] = []
         for path in sorted(project_root.rglob("*")):
             if path == output or should_exclude(path, project_root):
                 continue
-            archive.write(path, path.relative_to(project_root.parent))
+            arcname = path.relative_to(project_root.parent).as_posix()
+            archive.write(path, arcname)
+            if path.is_file():
+                names.append(arcname)
+        manifest_name = f"{project_root.name}/ZIP_MANIFEST.json"
+        manifest = build_manifest(project_root, names + [manifest_name])
+        archive.writestr(manifest_name, json.dumps(manifest, ensure_ascii=False, indent=2))
 
     print(f"Wrote {output}")
     return 0
@@ -58,6 +69,61 @@ def should_exclude(path: Path, project_root: Path) -> bool:
     if path.name.endswith(".egg-info"):
         return True
     return False
+
+
+def build_manifest(project_root: Path, names: list[str]) -> dict[str, object]:
+    version_path = project_root / "VERSION"
+    version = version_path.read_text(encoding="utf-8").strip() if version_path.exists() else "unknown"
+    return {
+        "tool": "ut-cover-agent-tool",
+        "version": version,
+        "built_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "git_commit": git_commit(project_root),
+        "required_ai_ssh_mcp_min_version": "0.1.0",
+        "files": sorted(names),
+    }
+
+
+def git_commit(project_root: Path) -> str:
+    git = find_git()
+    if not git:
+        return "unknown"
+    try:
+        completed = subprocess.run(
+            [str(git), "rev-parse", "HEAD"],
+            cwd=str(project_root),
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        return "unknown"
+    if completed.returncode != 0:
+        return "unknown"
+    return completed.stdout.strip() or "unknown"
+
+
+def find_git() -> str | None:
+    env_git = os.environ.get("UT_COVER_GIT")
+    if env_git and Path(env_git).exists():
+        return env_git
+    path_git = shutil.which("git")
+    if path_git:
+        return path_git
+    candidates: list[Path] = []
+    local_app = os.environ.get("LOCALAPPDATA")
+    if local_app:
+        candidates.extend(Path(local_app).glob("GitHubDesktop/app-*/resources/app/git/cmd/git.exe"))
+    program_files = os.environ.get("ProgramFiles")
+    if program_files:
+        candidates.append(Path(program_files) / "Git" / "cmd" / "git.exe")
+    program_files_x86 = os.environ.get("ProgramFiles(x86)")
+    if program_files_x86:
+        candidates.append(Path(program_files_x86) / "Git" / "cmd" / "git.exe")
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return None
 
 
 if __name__ == "__main__":

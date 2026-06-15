@@ -34,6 +34,11 @@ class ToolConfig:
     sync_include: list[str]
     sync_exclude: list[str]
     remote_clean_before_sync: bool
+    interaction_mode: str
+    autonomous_recovery_commands: list[str]
+    autonomous_max_iterations: int
+    autonomous_low_confidence_action: str
+    autonomous_missing_coverage_goal: str
     report_dir: str
     config_path: str | None = None
 
@@ -62,6 +67,11 @@ class ToolConfig:
             "sync_include": self.sync_include,
             "sync_exclude": self.sync_exclude,
             "remote_clean_before_sync": self.remote_clean_before_sync,
+            "interaction_mode": self.interaction_mode,
+            "autonomous_recovery_commands": self.autonomous_recovery_commands,
+            "autonomous_max_iterations": self.autonomous_max_iterations,
+            "autonomous_low_confidence_action": self.autonomous_low_confidence_action,
+            "autonomous_missing_coverage_goal": self.autonomous_missing_coverage_goal,
             "report_dir": self.report_dir,
             "config_path": self.config_path,
         }
@@ -110,6 +120,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "__pycache__/**",
     ],
     "remote_clean_before_sync": True,
+    "interaction_mode": "interactive",
+    "autonomous_recovery_commands": [],
+    "autonomous_max_iterations": 5,
+    "autonomous_low_confidence_action": "minimal_template",
+    "autonomous_missing_coverage_goal": "use_defaults",
     "report_dir": ".ut-cover/reports",
 }
 
@@ -154,6 +169,23 @@ def load_config(repo: str | Path = ".", config_path: str | Path | None = None) -
         sync_include=_string_list(data.get("sync_include"), DEFAULT_CONFIG["sync_include"]),
         sync_exclude=_string_list(data.get("sync_exclude"), DEFAULT_CONFIG["sync_exclude"]),
         remote_clean_before_sync=_bool(data.get("remote_clean_before_sync"), True),
+        interaction_mode=_choice(
+            str(data.get("interaction_mode") or "interactive"),
+            {"interactive", "autonomous"},
+            "interaction_mode",
+        ),
+        autonomous_recovery_commands=_string_list(data.get("autonomous_recovery_commands"), []),
+        autonomous_max_iterations=_positive_int(data.get("autonomous_max_iterations"), 5),
+        autonomous_low_confidence_action=_choice(
+            str(data.get("autonomous_low_confidence_action") or "minimal_template"),
+            {"minimal_template", "stop"},
+            "autonomous_low_confidence_action",
+        ),
+        autonomous_missing_coverage_goal=_choice(
+            str(data.get("autonomous_missing_coverage_goal") or "use_defaults"),
+            {"use_defaults", "stop"},
+            "autonomous_missing_coverage_goal",
+        ),
         report_dir=str(data.get("report_dir") or ".ut-cover/reports"),
         config_path=path_text,
     )
@@ -210,6 +242,15 @@ def _bool(value: Any, default: bool) -> bool:
         if lowered in {"0", "false", "no", "off"}:
             return False
     raise ValueError(f"Expected boolean value, got {value!r}")
+
+
+def _positive_int(value: Any, default: int) -> int:
+    if value is None or value == "":
+        return default
+    number = int(value)
+    if number < 1:
+        raise ValueError("Expected positive integer")
+    return number
 
 
 def _choice(value: str, allowed: set[str], field: str) -> str:

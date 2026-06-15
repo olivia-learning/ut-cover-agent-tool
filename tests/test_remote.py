@@ -158,6 +158,66 @@ class RemoteTests(unittest.TestCase):
         self.assertEqual(diagnosis["category"], "environment_or_path")
         self.assertEqual(diagnosis["next_action"], "ask_user_environment")
 
+    def test_autonomous_environment_failure_runs_recovery_commands_and_retries(self):
+        class RecoveringBackend(FakeBackend):
+            def __init__(self):
+                super().__init__()
+                self.build_attempts = 0
+
+            def run(self, command, cwd, timeout=None):
+                self.results.append((command, cwd, timeout))
+                if command == "source /opt/env.sh":
+                    return RemoteCommandResult(command, 0, "env fixed")
+                if "build" in command:
+                    self.build_attempts += 1
+                    if self.build_attempts == 1:
+                        return RemoteCommandResult(command, 127, "", "cmake: command not found")
+                    return RemoteCommandResult(command, 0, "build ok")
+                return RemoteCommandResult(command, 0, "dt ok")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".ut-cover.yaml").write_text(
+                "\n".join(
+                    [
+                        "interaction_mode: autonomous",
+                        "autonomous_recovery_commands:",
+                        "  - source /opt/env.sh",
+                        "autonomous_max_iterations: 2",
+                        'remote_build_command: "build.sh"',
+                        'remote_dt_command: "dt.sh"',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = load_config(repo)
+            backend = RecoveringBackend()
+
+            result = run_remote_commands(config, backend, "/tmp/ut-cover/repo/run-1")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(len(result["attempts"]), 2)
+        self.assertEqual(result["recovery_results"][0]["command"], "source /opt/env.sh")
+
+    def test_autonomous_environment_failure_without_recovery_archives_issue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            (repo / ".ut-cover.yaml").write_text("interaction_mode: autonomous\n", encoding="utf-8")
+            config = load_config(repo)
+        result = {
+            "build_result": {
+                "ok": False,
+                "stdout": "",
+                "stderr": "cmake: command not found",
+            },
+            "dt_result": None,
+        }
+
+        diagnosis = diagnose_remote_failure(result, config=config)
+
+        self.assertEqual(diagnosis["category"], "environment_or_path")
+        self.assertEqual(diagnosis["next_action"], "archive_issue")
+
 
 if __name__ == "__main__":
     unittest.main()

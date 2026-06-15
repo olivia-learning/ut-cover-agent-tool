@@ -31,6 +31,11 @@ def make_config(**overrides):
         sync_include=list(data["sync_include"]),
         sync_exclude=list(data["sync_exclude"]),
         remote_clean_before_sync=data["remote_clean_before_sync"],
+        interaction_mode=str(data["interaction_mode"]),
+        autonomous_recovery_commands=list(data["autonomous_recovery_commands"]),
+        autonomous_max_iterations=data["autonomous_max_iterations"],
+        autonomous_low_confidence_action=str(data["autonomous_low_confidence_action"]),
+        autonomous_missing_coverage_goal=str(data["autonomous_missing_coverage_goal"]),
         report_dir=str(data["report_dir"]),
         config_path=None,
     )

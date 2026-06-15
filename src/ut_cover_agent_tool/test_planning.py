@@ -77,20 +77,31 @@ def build_test_plan(repo: str | Path, config: ToolConfig, analysis: dict[str, An
         unit_candidates = [item for item in candidates if item.is_unit]
         high_confidence = [item for item in unit_candidates if item.confidence >= HIGH_CONFIDENCE][:3]
         nearest_non_unit = [item for item in candidates if not item.is_unit and item.confidence >= BLOCKED_NON_UNIT_DISPLAY][:3]
-        action = (
-            "use_high_confidence_neighbors"
-            if high_confidence
-            else "stop_for_user_or_minimal_template"
-        )
+        if high_confidence:
+            action = "use_high_confidence_neighbors"
+            status = "ready"
+            minimal_template = None
+        elif (
+            config.interaction_mode == "autonomous"
+            and config.autonomous_low_confidence_action == "minimal_template"
+        ):
+            action = "create_minimal_unit_template"
+            status = "minimal_template"
+            minimal_template = _minimal_template_for_source(source)
+        else:
+            action = "stop_for_user_or_minimal_template"
+            status = "low_confidence"
+            minimal_template = None
         entries.append(
             {
                 "source_file": source,
                 "action": action,
-                "status": "ready" if high_confidence else "low_confidence",
+                "status": status,
                 "recommended_neighbors": [item.to_dict() for item in high_confidence],
                 "other_unit_candidates": [item.to_dict() for item in unit_candidates[:5]],
                 "blocked_non_unit_candidates": [item.to_dict() for item in nearest_non_unit],
                 "guidance": _guidance_for_source(source, high_confidence),
+                "minimal_template": minimal_template,
             }
         )
 
@@ -128,6 +139,12 @@ def render_test_plan_markdown(plan: dict[str, Any]) -> str:
                 lines.append(
                     f"- `{candidate.get('path')}` confidence={candidate.get('confidence')} reasons={reasons}"
                 )
+        elif entry.get("status") == "minimal_template":
+            lines.append("- None. Autonomous mode may create a minimal UT template without mimicking DT.")
+            template = entry.get("minimal_template") or {}
+            if template:
+                lines.append(f"- Template kind: {template.get('kind')}")
+                lines.append(f"- Risk marker: `{template.get('risk_marker')}`")
         else:
             lines.append("- None. Stop and ask, or use a minimal unit-test template with explicit disclosure.")
         lines.append("")
@@ -318,6 +335,29 @@ def _guidance_for_source(source: str, high_confidence: list[TestCandidate]) -> s
         "No high-confidence unit-test neighbor found. Stop for user confirmation, "
         "or create a minimal UT template and explicitly state there was no safe style source."
     )
+
+
+def _minimal_template_for_source(source: str) -> dict[str, Any]:
+    suffix = Path(source).suffix.lower()
+    if suffix == ".py":
+        kind = "python"
+        example = "def test_behavior():\n    result = target_call()\n    assert result is not None"
+    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        kind = "node"
+        example = "test('behavior', () => {\n  const result = targetCall();\n  expect(result).toBeDefined();\n});"
+    elif suffix in {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"}:
+        kind = "cpp"
+        example = "TEST(ComponentTest, Behavior) {\n  auto result = target_call();\n  EXPECT_TRUE(result);\n}"
+    else:
+        kind = "generic"
+        example = "Call the changed behavior and assert an observable result."
+    return {
+        "kind": kind,
+        "source_file": source,
+        "risk_marker": "no_high_confidence_neighbor_used_minimal_template",
+        "must_have_assertion": True,
+        "example": example,
+    }
 
 
 def _allowed_neighbor_paths(plan: dict[str, Any]) -> set[str]:

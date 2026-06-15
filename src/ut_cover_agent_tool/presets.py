@@ -125,6 +125,11 @@ for _preset in CONFIG_PRESETS.values():
         ],
     )
     _preset.setdefault("remote_clean_before_sync", True)
+    _preset.setdefault("interaction_mode", "interactive")
+    _preset.setdefault("autonomous_recovery_commands", [])
+    _preset.setdefault("autonomous_max_iterations", 5)
+    _preset.setdefault("autonomous_low_confidence_action", "minimal_template")
+    _preset.setdefault("autonomous_missing_coverage_goal", "use_defaults")
 
 
 def detect_preset(repo: str | Path) -> str:
@@ -211,6 +216,14 @@ def render_config(
             *[f"  - {quote_yaml(str(item))}" for item in data["sync_exclude"]],
             "",
             f"remote_clean_before_sync: {str(data['remote_clean_before_sync']).lower()}",
+            "",
+            "# Autonomous mode is off by default. Enable it when the user says they will rest.",
+            f"interaction_mode: {quote_yaml(str(data['interaction_mode']))}",
+            "autonomous_recovery_commands:",
+            *[f"  - {quote_yaml(str(item))}" for item in data["autonomous_recovery_commands"]],
+            f"autonomous_max_iterations: {data['autonomous_max_iterations']}",
+            f"autonomous_low_confidence_action: {quote_yaml(str(data['autonomous_low_confidence_action']))}",
+            f"autonomous_missing_coverage_goal: {quote_yaml(str(data['autonomous_missing_coverage_goal']))}",
             "",
             f"report_dir: {quote_yaml(str(data['report_dir']))}",
             "",

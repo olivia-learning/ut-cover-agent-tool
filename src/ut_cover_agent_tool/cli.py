@@ -9,7 +9,7 @@ from typing import Any
 from . import __version__
 from .commands import run_shell
 from .config import DEFAULT_CONFIG_NAME, load_config
-from .config_writer import update_config_values
+from .config_writer import append_config_list_values, update_config_values
 from .coverage import parse_coverage_report
 from .coverage_gate import evaluate_coverage_gate
 from .errors import ToolUnavailableError, UtCoverError
@@ -26,6 +26,12 @@ from .remote import (
 )
 from .reports import build_report_payload, read_json, render_markdown, write_json, write_markdown
 from .test_planning import build_test_plan, render_test_plan_markdown, review_touched_tests
+from .upgrade import (
+    build_upgrade_status,
+    upgrade_ai_ssh_mcp_from_zip,
+    upgrade_from_zip,
+    write_upgrade_report,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -67,6 +73,40 @@ def build_parser() -> argparse.ArgumentParser:
     coverage_goal.add_argument("--changed-files", type=float, required=True, help="Required changed-files line coverage percent.")
     coverage_goal.add_argument("--unknown-action", choices=["warn", "fail"], default="warn", help="What to do when coverage cannot be evaluated.")
     coverage_goal.set_defaults(func=cmd_set_coverage_goal)
+
+    autonomous = subparsers.add_parser("set-autonomous-mode", help="Enable or disable autonomous/rest mode.")
+    autonomous.add_argument("--repo", default=".", help="Target repository path.")
+    autonomous.add_argument("--enable", required=True, choices=["true", "false"], help="true enables autonomous mode; false restores interactive mode.")
+    autonomous.set_defaults(func=cmd_set_autonomous_mode)
+
+    autonomous_status = subparsers.add_parser("autonomous-status", help="Show autonomous/rest mode status.")
+    autonomous_status.add_argument("--repo", default=".", help="Target repository path.")
+    autonomous_status.add_argument("--config", default=None, help=f"Config path. Defaults to repo/{DEFAULT_CONFIG_NAME}.")
+    autonomous_status.set_defaults(func=cmd_autonomous_status)
+
+    recovery = subparsers.add_parser("set-recovery-instructions", help="Store user-approved remote recovery commands.")
+    recovery.add_argument("--repo", default=".", help="Target repository path.")
+    recovery.add_argument("--command", action="append", required=True, help="Recovery command. May be repeated.")
+    recovery.add_argument("--replace", action="store_true", help="Replace existing recovery commands.")
+    recovery.set_defaults(func=cmd_set_recovery_instructions)
+
+    upgrade_status = subparsers.add_parser("upgrade-status", help="Check installed versions and ZIP upgrade inputs.")
+    upgrade_status.add_argument("--install-dir", help="Current ut-cover-agent-tool install dir.")
+    upgrade_status.add_argument("--ut-zip", help="New ut-cover-agent-tool.zip path.")
+    upgrade_status.add_argument("--ssh-zip", help="New ai-ssh-mcp-tool.zip path.")
+    upgrade_status.add_argument("--zip-dir", help="Directory containing staged ZIP files.")
+    upgrade_status.add_argument("--repo", help="Optional target repo used to read interaction_mode.")
+    upgrade_status.set_defaults(func=cmd_upgrade_status)
+
+    upgrade = subparsers.add_parser("upgrade", help="Upgrade ut-cover and optionally ai_ssh_mcp from staged ZIP files.")
+    upgrade.add_argument("--install-dir", required=True, help="Current ut-cover-agent-tool install dir.")
+    upgrade.add_argument("--ut-zip", required=True, help="New ut-cover-agent-tool.zip path.")
+    upgrade.add_argument("--ssh-zip", help="New ai-ssh-mcp-tool.zip path. Defaults to same directory as ut zip.")
+    upgrade.add_argument("--ssh-install-dir", help="Current ai_ssh_mcp install dir if it cannot be inferred.")
+    upgrade.add_argument("--upgrade-ssh", action="store_true", help="Confirm SSH MCP upgrade in interactive mode.")
+    upgrade.add_argument("--repo", help="Optional target repo used to read interaction_mode.")
+    upgrade.add_argument("--skip-pip-install", action="store_true", help=argparse.SUPPRESS)
+    upgrade.set_defaults(func=cmd_upgrade)
 
     analyze = subparsers.add_parser("analyze-commits", help="Analyze commit diffs.")
     add_common(analyze)
@@ -240,6 +280,52 @@ def cmd_set_coverage_goal(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_autonomous_mode(args: argparse.Namespace) -> int:
+    mode = "autonomous" if args.enable == "true" else "interactive"
+    output = update_config_values(args.repo, {"interaction_mode": mode})
+    print(json.dumps({"ok": True, "config": str(output), "interaction_mode": mode}, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_autonomous_status(args: argparse.Namespace) -> int:
+    repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
+    payload = {
+        "ok": True,
+        "repo": str(repo),
+        "interaction_mode": config.interaction_mode,
+        "autonomous_enabled": config.interaction_mode == "autonomous",
+        "autonomous_recovery_commands": config.autonomous_recovery_commands,
+        "autonomous_max_iterations": config.autonomous_max_iterations,
+        "autonomous_low_confidence_action": config.autonomous_low_confidence_action,
+        "autonomous_missing_coverage_goal": config.autonomous_missing_coverage_goal,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_set_recovery_instructions(args: argparse.Namespace) -> int:
+    output = append_config_list_values(
+        args.repo,
+        "autonomous_recovery_commands",
+        list(args.command or []),
+        replace=args.replace,
+    )
+    config = load_config(args.repo)
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "config": str(output),
+                "autonomous_recovery_commands": config.autonomous_recovery_commands,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
 def cmd_analyze_commits(args: argparse.Namespace) -> int:
     commits = parse_commit_inputs(args.commits, args.commit_file)
     if not commits:
@@ -259,6 +345,7 @@ def cmd_analyze_commits(args: argparse.Namespace) -> int:
 def cmd_run_coverage(args: argparse.Namespace) -> int:
     repo = Path(args.repo).resolve()
     config = load_config(repo, args.config)
+    config = _ensure_autonomous_coverage_goal(repo, config)
     if config.execution_mode == "remote":
         return cmd_run_remote_coverage(args, repo, config)
 
@@ -317,7 +404,9 @@ def cmd_run_remote_coverage(args: argparse.Namespace, repo: Path, config) -> int
     write_json(payload, output)
     print(f"Wrote coverage result: {output}")
     if not remote_run["ok"]:
-        diagnosis = diagnose_remote_failure(remote_run)
+        diagnosis = diagnose_remote_failure(remote_run, config=config)
+        payload["remote_diagnosis"] = diagnosis
+        write_json(payload, output)
         write_json(diagnosis, _resolve_output(repo, ".ut-cover/remote-diagnosis.json"))
         return 1
     return 0 if coverage_gate.get("ok", True) else 1
@@ -394,16 +483,81 @@ def cmd_remote_fetch(args: argparse.Namespace) -> int:
 
 def cmd_remote_diagnose(args: argparse.Namespace) -> int:
     repo = Path(args.repo).resolve()
+    config = load_config(repo, args.config)
     remote_run = read_json(_resolve_output(repo, args.remote_run))
     log_text = "\n".join(
         Path(path).read_text(encoding="utf-8", errors="replace")
         for path in args.log
         if Path(path).exists()
     )
-    result = diagnose_remote_failure(remote_run, fetched_text=log_text)
+    result = diagnose_remote_failure(remote_run, fetched_text=log_text, config=config)
     output = write_json(result, _resolve_output(repo, args.output))
     print(f"Wrote remote diagnosis: {output}")
     return 0 if result["ok"] else 1
+
+
+def cmd_upgrade_status(args: argparse.Namespace) -> int:
+    interaction_mode = _interaction_mode_from_repo(args.repo)
+    payload = build_upgrade_status(
+        install_dir=args.install_dir,
+        ut_zip=args.ut_zip,
+        ssh_zip=args.ssh_zip,
+        zip_dir=args.zip_dir,
+        interaction_mode=interaction_mode,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
+    return 0 if payload.get("ok") else 1
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    interaction_mode = _interaction_mode_from_repo(args.repo)
+    ssh_zip = Path(args.ssh_zip).resolve() if args.ssh_zip else Path(args.ut_zip).resolve().parent / "ai-ssh-mcp-tool.zip"
+    status = build_upgrade_status(
+        install_dir=args.install_dir,
+        ut_zip=args.ut_zip,
+        ssh_zip=ssh_zip,
+        interaction_mode=interaction_mode,
+    )
+    report = {
+        "ok": True,
+        "action": "upgrade",
+        "interaction_mode": interaction_mode,
+        "status_before": status,
+        "ut_upgrade": None,
+        "ssh_upgrade": None,
+        "next_action": "continue",
+    }
+    report["ut_upgrade"] = upgrade_from_zip(
+        args.install_dir,
+        args.ut_zip,
+        run_pip_install=not args.skip_pip_install,
+    )
+    report["ok"] = bool(report["ut_upgrade"].get("ok"))
+    if not report["ok"]:
+        report["next_action"] = "inspect_ut_upgrade_error"
+    should_upgrade_ssh = args.upgrade_ssh or (
+        interaction_mode == "autonomous"
+        and status.get("next_action") == "auto_upgrade_ai_ssh_mcp"
+        and ssh_zip.exists()
+    )
+    if should_upgrade_ssh:
+        report["ssh_upgrade"] = upgrade_ai_ssh_mcp_from_zip(
+            ssh_zip,
+            ssh_install_dir=args.ssh_install_dir,
+            reference_install_dir=args.install_dir,
+            run_pip_install=not args.skip_pip_install,
+        )
+        report["ok"] = bool(report["ok"] and report["ssh_upgrade"].get("ok"))
+    elif status.get("next_action") in {"upgrade_ai_ssh_mcp_with_confirmation", "auto_upgrade_ai_ssh_mcp"}:
+        report["ok"] = False
+        report["next_action"] = (
+            "provide_ai_ssh_mcp_zip"
+            if not ssh_zip.exists()
+            else "rerun_with_upgrade_ssh"
+        )
+    write_upgrade_report(args.install_dir, report)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0 if report.get("ok") else 1
 
 
 def cmd_plan_tests(args: argparse.Namespace) -> int:
@@ -471,6 +625,36 @@ def _resolve_output(repo: Path, output: str) -> Path:
 def _validate_percent(value: float, field: str) -> None:
     if value < 0 or value > 100:
         raise UtCoverError(f"{field} must be between 0 and 100")
+
+
+def _ensure_autonomous_coverage_goal(repo: Path, config):
+    if config.interaction_mode != "autonomous":
+        return config
+    if config.autonomous_missing_coverage_goal != "use_defaults":
+        return config
+    if config.coverage_threshold is not None and config.changed_files_coverage_threshold is not None:
+        return config
+    update_config_values(
+        repo,
+        {
+            "coverage_threshold": config.coverage_threshold if config.coverage_threshold is not None else 80,
+            "changed_files_coverage_threshold": config.changed_files_coverage_threshold
+            if config.changed_files_coverage_threshold is not None
+            else 85,
+            "coverage_unknown_action": config.coverage_unknown_action or "warn",
+            "coverage_fail_below_threshold": config.coverage_fail_below_threshold,
+        },
+    )
+    return load_config(repo)
+
+
+def _interaction_mode_from_repo(repo: str | None) -> str:
+    if not repo:
+        return "interactive"
+    try:
+        return load_config(repo).interaction_mode
+    except Exception:
+        return "interactive"
 
 
 def _read_optional_json(path: Path) -> dict[str, Any] | None:

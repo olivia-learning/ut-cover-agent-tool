@@ -99,6 +99,50 @@ class CliFlowTests(unittest.TestCase):
             self.assertEqual(payload["coverage_gate"]["status"], "failed")
             self.assertEqual(payload["coverage_gate"]["next_action"], "report_threshold_failure")
 
+    def test_autonomous_mode_commands_and_default_coverage_goal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            writer = repo / "write_coverage.py"
+            writer.write_text(
+                "import json\n"
+                "open('coverage.json', 'w', encoding='utf-8').write(json.dumps({\n"
+                "  'totals': {'covered_lines': 9, 'missing_lines': 1, 'num_statements': 10, 'percent_covered': 90.0},\n"
+                "  'files': {'src/app.py': {'summary': {'covered_lines': 9, 'missing_lines': 1, 'num_statements': 10, 'percent_covered': 90.0}, 'missing_lines': [10]}}\n"
+                "}))\n",
+                encoding="utf-8",
+            )
+            command = f"{sys.executable} write_coverage.py".replace("'", "''")
+            (repo / ".ut-cover.yaml").write_text(
+                "\n".join([f"coverage_command: '{command}'", 'coverage_report: "coverage.json"']),
+                encoding="utf-8",
+            )
+
+            enable_code = main(["set-autonomous-mode", "--repo", str(repo), "--enable", "true"])
+            recovery_code = main(
+                [
+                    "set-recovery-instructions",
+                    "--repo",
+                    str(repo),
+                    "--command",
+                    "source /opt/test-env.sh",
+                ]
+            )
+            status_code = main(["autonomous-status", "--repo", str(repo)])
+            run_code = main(["run-coverage", "--repo", str(repo), "--output", ".ut-cover/coverage.json"])
+
+            self.assertEqual(enable_code, 0)
+            self.assertEqual(recovery_code, 0)
+            self.assertEqual(status_code, 0)
+            self.assertEqual(run_code, 0)
+            config_text = (repo / ".ut-cover.yaml").read_text(encoding="utf-8")
+            self.assertIn("interaction_mode", config_text)
+            self.assertIn("coverage_threshold: 80", config_text)
+            self.assertIn("source /opt/test-env.sh", config_text)
+
+            disable_code = main(["set-autonomous-mode", "--repo", str(repo), "--enable", "false"])
+            self.assertEqual(disable_code, 0)
+            self.assertIn("interactive", (repo / ".ut-cover.yaml").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

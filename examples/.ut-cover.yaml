@@ -69,4 +69,11 @@ sync_exclude:
   - "__pycache__/**"
 remote_clean_before_sync: true
 
+# 用户休息时可由主 AI 开启 autonomous；默认保持 interactive。
+interaction_mode: "interactive"
+autonomous_recovery_commands: []
+autonomous_max_iterations: 5
+autonomous_low_confidence_action: "minimal_template"
+autonomous_missing_coverage_goal: "use_defaults"
+
 report_dir: ".ut-cover/reports"

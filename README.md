@@ -302,3 +302,54 @@ python scripts\package_zip.py
 ```
 
 ZIP 只包含 `ut-cover-agent-tool/` 独立子项目，不包含虚拟环境、缓存、构建产物、覆盖率产物和旧的 AI SSH MCP 工具文件。
+
+## 无人值守模式
+
+用户说“我要休息”“你自己跑完”时，OpenCode 主 AI 可以开启无人值守：
+
+```powershell
+ut-cover set-autonomous-mode --repo C:\Work\my-product-repo --enable true
+```
+
+用户回来后关闭：
+
+```powershell
+ut-cover set-autonomous-mode --repo C:\Work\my-product-repo --enable false
+```
+
+查看当前状态：
+
+```powershell
+ut-cover autonomous-status --repo C:\Work\my-product-repo
+```
+
+无人值守模式下，缺少覆盖率目标时自动使用整体 `80`、变更文件 `85`、unknown 为 `warn`。没有高置信度 UT 邻居时，工具会让 AI 使用最小 UT 模板，而不是模仿 DT/integration/e2e。
+
+如果用户提前给了远端环境修复指令，可以写入配置：
+
+```powershell
+ut-cover set-recovery-instructions --repo C:\Work\my-product-repo --command "source /opt/test-env.sh"
+```
+
+## 已有旧版本时升级
+
+后续阶段性 ZIP 交付时，把下面两个 ZIP 放在同一目录：
+
+```text
+ut-cover-agent-tool.zip
+ai-ssh-mcp-tool.zip
+```
+
+先检查：
+
+```powershell
+ut-cover upgrade-status --install-dir C:\Tools\ut-cover-agent-tool --zip-dir C:\Tools
+```
+
+再原地升级：
+
+```powershell
+ut-cover upgrade --install-dir C:\Tools\ut-cover-agent-tool --ut-zip C:\Tools\ut-cover-agent-tool.zip
+```
+
+更完整步骤见 `UPGRADE.md` 和 `OPENCODE_UPGRADE.md`。

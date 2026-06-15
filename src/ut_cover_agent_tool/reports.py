@@ -25,11 +25,15 @@ def build_report_payload(
     coverage_summary = coverage.get("coverage", {}) if coverage else {}
     test_result = coverage.get("test_result", {}) if coverage else {}
     coverage_gate = coverage.get("coverage_gate", {}) if coverage else {}
+    config = coverage.get("config", {}) if coverage else {}
+    remote_diagnosis = coverage.get("remote_diagnosis", {}) if coverage else {}
     return {
         "commits": commits,
         "test_result": test_result,
         "coverage": coverage_summary,
         "coverage_gate": coverage_gate,
+        "interaction_mode": config.get("interaction_mode", "unknown"),
+        "remote_diagnosis": remote_diagnosis,
         "touched_tests": touched_tests or [],
     }
 
@@ -55,6 +59,10 @@ def render_markdown(payload: dict[str, Any]) -> str:
         )
     else:
         lines.extend(["- Status: not run", ""])
+
+    lines.extend(["## Run Mode", ""])
+    lines.append(f"- Interaction mode: `{payload.get('interaction_mode', 'unknown')}`")
+    lines.append("")
 
     coverage = payload.get("coverage") or {}
     lines.extend(["## Coverage", ""])
@@ -98,6 +106,14 @@ def render_markdown(payload: dict[str, Any]) -> str:
         lines.append("")
     else:
         lines.extend(["- Not configured or not evaluated", ""])
+
+    diagnosis = payload.get("remote_diagnosis") or {}
+    if diagnosis:
+        lines.extend(["## Remote Diagnosis", ""])
+        lines.append(f"- Category: `{diagnosis.get('category', '')}`")
+        lines.append(f"- Next action: `{diagnosis.get('next_action', '')}`")
+        lines.append(f"- Message: {diagnosis.get('message', '')}")
+        lines.append("")
 
     lines.extend(["## Commits", ""])
     for commit in payload.get("commits", []):

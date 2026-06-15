@@ -227,6 +227,44 @@ def sync_workspace(repo: str | Path, config: ToolConfig, backend: RemoteBackend,
 
 
 def run_remote_commands(config: ToolConfig, backend: RemoteBackend, remote_workspace: str, timeout: int | None = None) -> dict[str, Any]:
+    attempts: list[dict[str, Any]] = []
+    recovery_results: list[dict[str, Any]] = []
+    max_attempts = config.autonomous_max_iterations if config.interaction_mode == "autonomous" else 1
+    max_attempts = max(1, max_attempts)
+
+    for attempt in range(1, max_attempts + 1):
+        result = _run_build_dt_once(config, backend, remote_workspace, timeout=timeout)
+        result["attempt"] = attempt
+        attempts.append(result)
+        if result["ok"]:
+            result["attempts"] = attempts
+            result["recovery_results"] = recovery_results
+            return result
+
+        diagnosis = diagnose_remote_failure(result, config=config)
+        result["diagnosis"] = diagnosis
+        should_recover = (
+            config.interaction_mode == "autonomous"
+            and diagnosis.get("next_action") == "run_recovery_commands"
+            and bool(config.autonomous_recovery_commands)
+            and attempt < max_attempts
+        )
+        if not should_recover:
+            result["attempts"] = attempts
+            result["recovery_results"] = recovery_results
+            return result
+
+        for command in config.autonomous_recovery_commands:
+            recovery = backend.run(command, cwd=remote_workspace, timeout=timeout)
+            recovery_results.append(recovery.to_dict())
+
+    final = attempts[-1]
+    final["attempts"] = attempts
+    final["recovery_results"] = recovery_results
+    return final
+
+
+def _run_build_dt_once(config: ToolConfig, backend: RemoteBackend, remote_workspace: str, timeout: int | None = None) -> dict[str, Any]:
     build_result = None
     dt_result = None
     ok = True
@@ -281,7 +319,11 @@ def fetch_remote_artifacts(
     }
 
 
-def diagnose_remote_failure(remote_result: dict[str, Any], fetched_text: str = "") -> dict[str, Any]:
+def diagnose_remote_failure(
+    remote_result: dict[str, Any],
+    fetched_text: str = "",
+    config: ToolConfig | None = None,
+) -> dict[str, Any]:
     build = remote_result.get("build_result") or {}
     dt = remote_result.get("dt_result") or {}
     text = "\n".join(
@@ -310,6 +352,12 @@ def diagnose_remote_failure(remote_result: dict[str, Any], fetched_text: str = "
     else:
         category = "unknown"
         next_action = "stop"
+
+    if config and config.interaction_mode == "autonomous":
+        if category == "environment_or_path":
+            next_action = "run_recovery_commands" if config.autonomous_recovery_commands else "archive_issue"
+        elif category in {"source_compile_error", "unknown"}:
+            next_action = "archive_issue"
 
     return {
         "ok": category not in {"environment_or_path", "source_compile_error", "unknown"},
